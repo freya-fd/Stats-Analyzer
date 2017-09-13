@@ -71,7 +71,7 @@ def rate_limiter(func):
                 time.sleep(10)
                 ret = func(*args, **kwargs)
             elif (limit_data['app_limit_120'] - limit_data['app_count_120']) < 2:
-                time.sleep(90)
+                time.sleep(60)
                 ret = func(*args, **kwargs)
             else:
                 ret = func(*args, **kwargs)
