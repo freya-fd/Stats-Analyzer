@@ -61,25 +61,19 @@ def rate_limiter(func):
     def wrapper(*args, **kwargs):
         global CURR_HEADER
         if CURR_HEADER == {}:
-            print("rate_limiter IF")
             ret = func(*args, **kwargs)
         else:
-            print("rate_limiter ELSE root")
             limit_data = parse_header(CURR_HEADER)
             if (limit_data['app_limit_1'] - limit_data['app_count_1']) < 2:
-                print("rate_limiter ELSE-IF")
                 time.sleep(1)
                 ret = func(*args, **kwargs)
             elif (limit_data['method_limit_10'] - limit_data['method_count_10']) < 2:
-                print("rate_limiter ELSE-ELIF1")
                 time.sleep(10)
                 ret = func(*args, **kwargs)
             elif (limit_data['app_limit_120'] - limit_data['app_count_120']) < 2:
-                print("rate_limiter ELSE-ELIF2")
                 time.sleep(90)
                 ret = func(*args, **kwargs)
             else:
-                print("rate_limiter ELSE-ELSE")
                 ret = func(*args, **kwargs)
         return ret
     return wrapper
@@ -134,11 +128,12 @@ def update_match_data(data):
 def id_from_name(name):
     print("id_from_name")
     r = get_request(ENDPOINT + 'summoner/v3/summoners/by-name/' + name + '?' + API_KEY)
-    return str(r['accountId'])
+    return r['accountId']
 
 def get_matchlist(accountID, season, queue):
     print("get_matchlist")
     begin_index = 0
+    accountID = str(accountID)
     r = get_request(ENDPOINT + 'match/v3/matchlists/by-account/' + accountID + '?season=' + season + '&queue=' + queue + '&beginIndex=' + str(begin_index) + '&' + API_KEY)
     matches = r['matches']
     total_games = r['totalGames']
@@ -177,6 +172,7 @@ def get_teammates(match, current_account_id, team):
     return teammates
 
 def get_match_state(match, team):
+    print(team)
     if match['gameDuration'] < 300:
         return 'Remake'
     if team == 'blue':
