@@ -24,26 +24,37 @@ CURR_HEADER = {}
 #pylint: disable=E0001, E1101, C0111, C0103
 
 #TODO: Include functionality to check the match_list file for existing data and only pull new data
+#TODO: Refactor load_champ_data and surrounding functions to remove from main
 
 def parse_header(header):
-    app_limits = header['X-App-Rate-Limit']
-    app_counts = header['X-App-Rate-Limit-Count']
     method_limit = header['X-Method-Rate-Limit']
     method_count = header['X-Method-Rate-Limit-Count']
-    app_limit_120 = app_limits.split(',')[0].split(':')[0]
-    app_limit_1 = app_limits.split(',')[1].split(':')[0]
-    app_count_120 = app_counts.split(',')[0].split(':')[0]
-    app_count_1 = app_counts.split(',')[1].split(':')[0]
     method_limit_10 = method_limit.split(':')[0]
     method_count_10 = method_count.split(':')[0]
-    return {
-        'app_limit_120':int(app_limit_120),
-        'app_limit_1':int(app_limit_1),
-        'app_count_120':int(app_count_120),
-        'app_count_1':int(app_count_1),
-        'method_limit_10':int(method_limit_10),
-        'method_count_10':int(method_count_10)
-        }
+    if 'X-App-Rate-Limit' in header:
+        app_limits = header['X-App-Rate-Limit']
+        app_counts = header['X-App-Rate-Limit-Count']        
+        app_limit_120 = app_limits.split(',')[0].split(':')[0]
+        app_limit_1 = app_limits.split(',')[1].split(':')[0]
+        app_count_120 = app_counts.split(',')[0].split(':')[0]
+        app_count_1 = app_counts.split(',')[1].split(':')[0]        
+        return {
+            'app_limit_120':int(app_limit_120),
+            'app_limit_1':int(app_limit_1),
+            'app_count_120':int(app_count_120),
+            'app_count_1':int(app_count_1),
+            'method_limit_10':int(method_limit_10),
+            'method_count_10':int(method_count_10)
+            }
+    else:
+        return {
+            'app_limit_120':100,
+            'app_limit_1':20,
+            'app_count_120':0,
+            'app_count_1':0,
+            'method_limit_10':int(method_limit_10),
+            'method_count_10':int(method_count_10)
+            }
 
 def rate_limiter(func):
     @wraps(func)
@@ -65,7 +76,7 @@ def rate_limiter(func):
                 ret = func(*args, **kwargs)
             elif (limit_data['app_limit_120'] - limit_data['app_count_120']) < 2:
                 print("rate_limiter ELSE-ELIF2")
-                time.sleep(120)
+                time.sleep(90)
                 ret = func(*args, **kwargs)
             else:
                 print("rate_limiter ELSE-ELSE")
@@ -139,42 +150,43 @@ def get_matchlist(accountID, season, queue):
         matches.extend(r['matches'])
     return matches
 
-# -----------------------------------------^^NEW AND TESTED^^-----------------------------------------------------------
-def get_teammates(pdict, team, myid):
-    global matchPlayers
-    matchPlayers = []
-    for playerid, sumName in pdict.items():
-        if team == 'blue' and myid != playerid and playerid <= 5:
-            myTeammates.append(sumName)
-            matchPlayers.append(sumName)
-        elif team == 'red' and myid != playerid and playerid >= 6:
-            myTeammates.append(sumName)
-            matchPlayers.append(sumName)
+def get_match_info(game_id):
+    game_id = str(game_id)
+    r = get_request(ENDPOINT + 'match/v3/matches/' + game_id + '?' + API_KEY)
+    return r
 
-def get_match_info(mId, sn):
-    r = requests.get(ENDPOINT + 'v2.2/match/' + mId + '?' + API_KEY)
-    print('Current count: ' + r.headers['X-Method-Rate-Limit-Count'] + 'out of ' + r.headers['X-Method-Rate-Limit'])
-    duration = r.json()['matchDuration']
-    participantIds = r.json()['participantIdentities']
-    participants = r.json()['participants']
-    pdict = {}
-    for p in participantIds:
-        pdict[p['participantId']] = p['player']['summonerName']
-        if p['player']['summonerName'] == sn:
-            pId = p['participantId']
-            if pId <=5:
-                team = 'blue'
-            else:
-                team = 'red'
-    get_teammates(pdict, team, pId)
-    for p in participants:
-        if p['participantId'] == pId:
-            if duration <= 300:
-                return 'Remake'
-            elif p['stats']['winner']:
-                return 'Win'
-            else:
-                return 'Loss'
+def get_team(match, summoner_name):
+    participant_identities = match['participantIdentities']
+    for x in participant_identities:
+        if x['player']['summonerName'] == summoner_name:
+            if x['participantId'] <= 5:
+                return 'blue'
+            elif x['participantId'] > 5:
+                return 'red'
+            
+def get_teammates(match, summoner_name, team):
+    participant_identities = match['participantIdentities']
+    teammates = []
+    for x in participant_identities:
+        if team == 'blue':
+            if x['player']['summonerName'] != summoner_name and x['participantId'] <= 5:
+                teammates.append(x['player']['summonerName'])
+        elif team == 'red':
+            if x['player']['summonerName'] != summoner_name and x['participantId'] > 5:
+                teammates.append(x['player']['summonerName'])
+    return teammates
+
+def get_match_state(match, team):
+    if match['gameDuration'] < 300:
+        return 'Remake'
+    if team == 'blue':
+        state = match['teams'][0]['win']
+    elif team == 'red':
+        state = match['teams'][1]['win']
+    if state == 'Fail':
+        return 'Loss'
+    elif state == 'Win':
+        return 'Win'
 
 def make_workbook(summoner_name, matchlist):
     global CHAMP_LIST
@@ -198,6 +210,9 @@ def make_workbook(summoner_name, matchlist):
     ws1.cell(column=11, row=1, value='Teammate4')
     
     for row, match in enumerate(reversed(matchlist), start=2):
+        match_info = get_match_info(match['gameId'])
+        team = get_team(match_info, summoner_name)
+        teammates = get_teammates(match_info, summoner_name, team)
         ws1.cell(column=1, row=row, value=match['gameId'])
         excel_time = (((match['timestamp'] / 1000) - 18000) / 86400) + 25568 # Converts unix-time to excel date/time
         ws1.cell(column=2, row=row, value=excel_time)
@@ -206,11 +221,11 @@ def make_workbook(summoner_name, matchlist):
         ws1.cell(column=4, row=row, value=match['role'])
         ws1.cell(column=5, row=row, value=match['lane'])
         ws1.cell(column=6, row=row, value='Solo')
-        # ws1.cell(column=7, row=row, value=get_match_info(str(match['gameId']), summoner_name))
-        # ws1.cell(column=8, row=row, value=matchPlayers[0])
-        # ws1.cell(column=9, row=row, value=matchPlayers[1])
-        # ws1.cell(column=10, row=row, value=matchPlayers[2])
-        # ws1.cell(column=11, row=row, value=matchPlayers[3])
+        ws1.cell(column=7, row=row, value=get_match_state(match_info, team))
+        ws1.cell(column=8, row=row, value=teammates[0])
+        ws1.cell(column=9, row=row, value=teammates[1])
+        ws1.cell(column=10, row=row, value=teammates[2])
+        ws1.cell(column=11, row=row, value=teammates[3])
 
     wb.save(filename=dest_filename)
 
