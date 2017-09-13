@@ -155,24 +155,24 @@ def get_match_info(game_id):
     r = get_request(ENDPOINT + 'match/v3/matches/' + game_id + '?' + API_KEY)
     return r
 
-def get_team(match, summoner_name):
+def get_team(match, current_account_id):
     participant_identities = match['participantIdentities']
     for x in participant_identities:
-        if x['player']['summonerName'] == summoner_name:
+        if x['player']['currentAccountId'] == current_account_id:
             if x['participantId'] <= 5:
                 return 'blue'
             elif x['participantId'] > 5:
                 return 'red'
             
-def get_teammates(match, summoner_name, team):
+def get_teammates(match, current_account_id, team):
     participant_identities = match['participantIdentities']
     teammates = []
     for x in participant_identities:
         if team == 'blue':
-            if x['player']['summonerName'] != summoner_name and x['participantId'] <= 5:
+            if x['player']['currentAccountId'] != current_account_id and x['participantId'] <= 5:
                 teammates.append(x['player']['summonerName'])
         elif team == 'red':
-            if x['player']['summonerName'] != summoner_name and x['participantId'] > 5:
+            if x['player']['currentAccountId'] != current_account_id and x['participantId'] > 5:
                 teammates.append(x['player']['summonerName'])
     return teammates
 
@@ -188,7 +188,7 @@ def get_match_state(match, team):
     elif state == 'Win':
         return 'Win'
 
-def make_workbook(summoner_name, matchlist):
+def make_workbook(summoner_name, matchlist, accountID):
     global CHAMP_LIST
     date_style = NamedStyle(name='datetime', number_format='M/D/YYYY HH:MM AM/PM')
     wb = Workbook()
@@ -211,8 +211,8 @@ def make_workbook(summoner_name, matchlist):
     
     for row, match in enumerate(reversed(matchlist), start=2):
         match_info = get_match_info(match['gameId'])
-        team = get_team(match_info, summoner_name)
-        teammates = get_teammates(match_info, summoner_name, team)
+        team = get_team(match_info, accountID)
+        teammates = get_teammates(match_info, accountID, team)
         ws1.cell(column=1, row=row, value=match['gameId'])
         excel_time = (((match['timestamp'] / 1000) - 18000) / 86400) + 25568 # Converts unix-time to excel date/time
         ws1.cell(column=2, row=row, value=excel_time)
@@ -244,7 +244,7 @@ def main():
     update_match_data(matchlist)
     CHAMP_LIST = get_champ_list()
 
-    make_workbook(summoner_name, matchlist)
+    make_workbook(summoner_name, matchlist, accountID)
 
 if __name__ == "__main__":
     main()
