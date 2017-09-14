@@ -206,7 +206,7 @@ def get_match_state(match, team):
 def make_workbook(summoner_name, matchlist, accountID, queue, old_data):
     print('make_workbook')
     global CHAMP_LIST
-    dest_filename = os.path.join(DIR, summoner_name.lower() + '_' + queue.lower() + '_role_per_game.xlsx')
+    dest_filename = os.path.join(DIR, summoner_name + '_' + queue.lower() + '_role_per_game.xlsx')
     if old_data == []:
         date_style = NamedStyle(name='datetime', number_format='M/D/YYYY HH:MM AM/PM')
         wb = Workbook()        
