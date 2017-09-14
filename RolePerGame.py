@@ -130,15 +130,15 @@ def duplicate_match(summoner_name, queue, old_data, match_id):
 
 def get_current_match_data(summoner_name, queue):
     print('get_current_match_data')
-    if glob.glob(os.path.join(DIR, 'Data\\' + summoner_name + '_' + queue + '_' + 'match_list.txt')) == []:
+    if glob.glob(os.path.join(DIR, 'Data\\' + summoner_name + '_' + queue.lower() + '_' + 'match_list.txt')) == []:
         return []
     else:
-        with open(os.path.join(DIR, 'Data\\' + summoner_name + '_' + queue + '_' + 'match_list.txt')) as f:
+        with open(os.path.join(DIR, 'Data\\' + summoner_name + '_' + queue.lower() + '_' + 'match_list.txt')) as f:
             return json.load(f)
 
 def update_match_data(data, summoner_name, queue):
     print("update_match_data")
-    with open(os.path.join(DIR, 'Data\\' + summoner_name + '_' + queue + '_' + 'match_list.txt'), 'w') as f:
+    with open(os.path.join(DIR, 'Data\\' + summoner_name + '_' + queue.lower() + '_' + 'match_list.txt'), 'w') as f:
         json.dump(data, f)
 
 def id_from_name(name):
