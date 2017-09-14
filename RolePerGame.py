@@ -3,8 +3,10 @@ import time
 import threading
 import requests
 import json
+import glob
 import config as cfg
 from openpyxl import Workbook
+from openpyxl import load_workbook
 from openpyxl.compat import range
 from openpyxl.cell import cell
 from openpyxl.styles import NamedStyle
@@ -15,16 +17,14 @@ from enum import Enum
 ENDPOINT = 'https://na1.api.riotgames.com/lol/' # might need na. for older summoners
 KEY = cfg.DEV_KEY
 API_KEY = 'api_key=' + KEY
-MATCHES = []
 CHAMP_LIST = {}
-myTeammates = []
-matchPlayers = []
 DIR = os.path.dirname(__file__)
 CURR_HEADER = {}
 #pylint: disable=E0001, E1101, C0111, C0103
 
-#TODO: Include functionality to check the match_list file for existing data and only pull new data
 #TODO: Refactor load_champ_data and surrounding functions to remove from main
+#TODO: Develop algorithm to parse role/lane and ensure (as well as possible) accurateness. If has smite, is jg for example. Check champion tags, items maybe?
+#TODO: Add input to choose Solo, Flex or All
 
 def parse_header(header):
     method_limit = header['X-Method-Rate-Limit']
@@ -71,7 +71,7 @@ def rate_limiter(func):
                 time.sleep(10)
                 ret = func(*args, **kwargs)
             elif (limit_data['app_limit_120'] - limit_data['app_count_120']) < 2:
-                time.sleep(60)
+                time.sleep(80)
                 ret = func(*args, **kwargs)
             else:
                 ret = func(*args, **kwargs)
@@ -94,9 +94,9 @@ class Queue(Enum):
 
 def load_champ_data():
     print("load_champ_data")
-    with open(os.path.join(DIR, 'Data\\champ_list.txt')) as data_file:
+    with open(os.path.join(DIR, 'Data\\champ_list.txt')) as f:
         global CHAMP_LIST
-        CHAMP_LIST = json.load(data_file)
+        CHAMP_LIST = json.load(f)
 
 # Returns true if champ_list.txt is current
 def check_version():
@@ -107,10 +107,8 @@ def check_version():
 def get_champ_list():
     print("get_champ_list")
     if check_version() == True:
-        print("check_version() == true")
         return(CHAMP_LIST['data'])
     else:
-        print("check_version() == false")
         r = get_request(ENDPOINT + 'static-data/v3/champions?locale=en_US&dataById=true&' + API_KEY)
         with open(os.path.join(DIR, 'Data\\champ_list.txt'), 'w') as f:
             json.dump(r, f)
@@ -120,9 +118,27 @@ def get_champ_name(id, champ_list):
     print("get_champ_name")
     return(champ_list[str(id)]['name'])
 
-def update_match_data(data):
+def duplicate_match(summoner_name, queue, old_data, match_id):
+    print('duplicate_match')
+    if old_data == []:
+        return False
+    else: # if a file for this summoner/queue exists
+        for m in old_data:
+            if m['gameId'] == match_id:
+                return True
+        return False
+
+def get_current_match_data(summoner_name, queue):
+    print('get_current_match_data')
+    if glob.glob(os.path.join(DIR, 'Data\\' + summoner_name + '_' + queue + '_' + 'match_list.txt')) == []:
+        return []
+    else:
+        with open(os.path.join(DIR, 'Data\\' + summoner_name + '_' + queue + '_' + 'match_list.txt')) as f:
+            return json.load(f)
+
+def update_match_data(data, summoner_name, queue):
     print("update_match_data")
-    with open(os.path.join(DIR, 'Data\\match_list.txt'), 'w') as f:
+    with open(os.path.join(DIR, 'Data\\' + summoner_name + '_' + queue + '_' + 'match_list.txt'), 'w') as f:
         json.dump(data, f)
 
 def id_from_name(name):
@@ -138,19 +154,21 @@ def get_matchlist(accountID, season, queue):
     matches = r['matches']
     total_games = r['totalGames']
     remaining_games = total_games
-    while remaining_games > 0:
+    while total_games > begin_index:
         begin_index += 100
-        remaining_games -= 100
         r = get_request(ENDPOINT + 'match/v3/matchlists/by-account/' + accountID + '?season=' + season + '&queue=' + queue + '&beginIndex=' + str(begin_index) + '&' + API_KEY)
+        total_games = r['totalGames']
         matches.extend(r['matches'])
     return matches
 
 def get_match_info(game_id):
+    print('get_match_info')
     game_id = str(game_id)
     r = get_request(ENDPOINT + 'match/v3/matches/' + game_id + '?' + API_KEY)
     return r
 
 def get_team(match, current_account_id):
+    print('get_team')
     participant_identities = match['participantIdentities']
     for x in participant_identities:
         if x['player']['currentAccountId'] == current_account_id:
@@ -160,6 +178,7 @@ def get_team(match, current_account_id):
                 return 'red'
             
 def get_teammates(match, current_account_id, team):
+    print('get_teammates')
     participant_identities = match['participantIdentities']
     teammates = []
     for x in participant_identities:
@@ -172,7 +191,7 @@ def get_teammates(match, current_account_id, team):
     return teammates
 
 def get_match_state(match, team):
-    print(team)
+    print('get_match_state')
     if match['gameDuration'] < 300:
         return 'Remake'
     if team == 'blue':
@@ -184,44 +203,49 @@ def get_match_state(match, team):
     elif state == 'Win':
         return 'Win'
 
-def make_workbook(summoner_name, matchlist, accountID):
+def make_workbook(summoner_name, matchlist, accountID, queue, old_data):
+    print('make_workbook')
     global CHAMP_LIST
-    date_style = NamedStyle(name='datetime', number_format='M/D/YYYY HH:MM AM/PM')
-    wb = Workbook()
-    dest_filename = os.path.join(DIR, summoner_name.lower() + '_role_per_game.xlsx')
+    dest_filename = os.path.join(DIR, summoner_name.lower() + '_' + queue.lower() + '_role_per_game.xlsx')
+    if old_data == []:
+        date_style = NamedStyle(name='datetime', number_format='M/D/YYYY HH:MM AM/PM')
+        wb = Workbook()        
+        ws1 = wb.active
+        ws1.title = 'Roles Per Game - ' + queue
+        ws1.cell(column=1, row=1, value='GameID')
+        ws1.cell(column=2, row=1, value='Date')
+        ws1.cell(column=3, row=1, value='Champion')
+        ws1.cell(column=4, row=1, value='Role')
+        ws1.cell(column=5, row=1, value='Lane')
+        ws1.cell(column=6, row=1, value='Queue')
+        ws1.cell(column=7, row=1, value='W/L')
+        ws1.cell(column=8, row=1, value='Teammate1')
+        ws1.cell(column=9, row=1, value='Teammate2')
+        ws1.cell(column=10, row=1, value='Teammate3')
+        ws1.cell(column=11, row=1, value='Teammate4')
+    else:
+        wb = load_workbook(dest_filename)
+        ws1 = wb.active
+        date_style = ws1.cell(column=2, row=2).style
 
-    ws1 = wb.active
-    ws1.title = 'Roles Per Game'
-
-    ws1.cell(column=1, row=1, value='GameID')
-    ws1.cell(column=2, row=1, value='Date')
-    ws1.cell(column=3, row=1, value='Champion')
-    ws1.cell(column=4, row=1, value='Role')
-    ws1.cell(column=5, row=1, value='Lane')
-    ws1.cell(column=6, row=1, value='Queue')
-    ws1.cell(column=7, row=1, value='W/L')
-    ws1.cell(column=8, row=1, value='Teammate1')
-    ws1.cell(column=9, row=1, value='Teammate2')
-    ws1.cell(column=10, row=1, value='Teammate3')
-    ws1.cell(column=11, row=1, value='Teammate4')
-    
     for row, match in enumerate(reversed(matchlist), start=2):
-        match_info = get_match_info(match['gameId'])
-        team = get_team(match_info, accountID)
-        teammates = get_teammates(match_info, accountID, team)
-        ws1.cell(column=1, row=row, value=match['gameId'])
-        excel_time = (((match['timestamp'] / 1000) - 18000) / 86400) + 25568 # Converts unix-time to excel date/time
-        ws1.cell(column=2, row=row, value=excel_time)
-        ws1.cell(column=2, row=row).style = date_style
-        ws1.cell(column=3, row=row, value=get_champ_name(match['champion'], CHAMP_LIST))
-        ws1.cell(column=4, row=row, value=match['role'])
-        ws1.cell(column=5, row=row, value=match['lane'])
-        ws1.cell(column=6, row=row, value='Solo')
-        ws1.cell(column=7, row=row, value=get_match_state(match_info, team))
-        ws1.cell(column=8, row=row, value=teammates[0])
-        ws1.cell(column=9, row=row, value=teammates[1])
-        ws1.cell(column=10, row=row, value=teammates[2])
-        ws1.cell(column=11, row=row, value=teammates[3])
+            if not duplicate_match(summoner_name, queue, old_data, match['gameId']):
+                match_info = get_match_info(match['gameId'])
+                team = get_team(match_info, accountID)
+                teammates = get_teammates(match_info, accountID, team)
+                ws1.cell(column=1, row=row, value=match['gameId'])
+                excel_time = (((match['timestamp'] / 1000) - 18000) / 86400) + 25568 # Converts unix-time to excel date/time
+                ws1.cell(column=2, row=row, value=excel_time)
+                ws1.cell(column=2, row=row).style = date_style
+                ws1.cell(column=3, row=row, value=get_champ_name(match['champion'], CHAMP_LIST))
+                ws1.cell(column=4, row=row, value=match['role'])
+                ws1.cell(column=5, row=row, value=match['lane'])
+                ws1.cell(column=6, row=row, value='Solo')
+                ws1.cell(column=7, row=row, value=get_match_state(match_info, team))
+                ws1.cell(column=8, row=row, value=teammates[0])
+                ws1.cell(column=9, row=row, value=teammates[1])
+                ws1.cell(column=10, row=row, value=teammates[2])
+                ws1.cell(column=11, row=row, value=teammates[3])
 
     wb.save(filename=dest_filename)
 
@@ -237,10 +261,11 @@ def main():
     # print('\nGetting season ' + seasonInput + ' ' + queueInput + ' queue data for ' + summoner_name)
 
     matchlist = get_matchlist(accountID, '9', Queue.SOLO.value)
-    update_match_data(matchlist)
+    old_data = get_current_match_data(summoner_name, Queue.SOLO.name)
+    update_match_data(matchlist, summoner_name, Queue.SOLO.name)
     CHAMP_LIST = get_champ_list()
 
-    make_workbook(summoner_name, matchlist, accountID)
+    make_workbook(summoner_name, matchlist, accountID, Queue.SOLO.name, old_data)
 
 if __name__ == "__main__":
     main()
