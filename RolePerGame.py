@@ -88,8 +88,8 @@ def get_request(url):
     return r.json()
 
 class Queue(Enum):
-    ARAM = 65
-    INVASIONONSLAUGHT = 990
+    INVASION = 980
+    INVASION_ONSLAUGHT = 990
     FLEX = 440
     SOLO = 420
     SIEGE = 315
@@ -97,9 +97,8 @@ class Queue(Enum):
     CLASSIC = 400
     BLOODMOON = 600
     URF = 318
-    COOPVSAI = 31
-    COOPVSAI = 33
-    INVASION = 980
+    COOPVSAI_INTRO = 31
+    COOPVSAI_INTERMEDIATE = 33
 
 def load_champ_data():
     print("load_champ_data")
