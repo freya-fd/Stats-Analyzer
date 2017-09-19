@@ -4,6 +4,7 @@ import threading
 import requests
 import json
 import glob
+import sys
 import config as cfg
 from openpyxl import Workbook
 from openpyxl import load_workbook
@@ -24,7 +25,7 @@ CURR_HEADER = {}
 
 #TODO: Refactor load_champ_data and surrounding functions to remove from main
 #TODO: Develop algorithm to parse role/lane and ensure (as well as possible) accurateness. If has smite, is jg for example. Check champion tags, items maybe?
-#TODO: Add input to choose Solo, Flex or All
+#TODO: Addon to the above: If role is "DUO", make sure its placed in the right place (DUO should not be a choice)
 
 def parse_header(header):
     method_limit = header['X-Method-Rate-Limit']
@@ -87,10 +88,18 @@ def get_request(url):
     return r.json()
 
 class Queue(Enum):
-    ARAM = '65'
-    INVASION = '990'
-    FLEX = '440'
-    SOLO = '420'
+    ARAM = 65
+    INVASIONONSLAUGHT = 990
+    FLEX = 440
+    SOLO = 420
+    SIEGE = 315
+    KINGPORO = 300
+    CLASSIC = 400
+    BLOODMOON = 600
+    URF = 318
+    COOPVSAI = 31
+    COOPVSAI = 33
+    INVASION = 980
 
 def load_champ_data():
     print("load_champ_data")
@@ -150,13 +159,19 @@ def get_matchlist(accountID, season, queue):
     print("get_matchlist")
     begin_index = 0
     accountID = str(accountID)
-    r = get_request(ENDPOINT + 'match/v3/matchlists/by-account/' + accountID + '?season=' + season + '&queue=' + queue + '&beginIndex=' + str(begin_index) + '&' + API_KEY)
+    if queue == 'all':
+         r = get_request(ENDPOINT + 'match/v3/matchlists/by-account/' + accountID + '?season=' + season + '&beginIndex=' + str(begin_index) + '&' + API_KEY)
+    else:
+        r = get_request(ENDPOINT + 'match/v3/matchlists/by-account/' + accountID + '?season=' + season + '&queue=' + str(queue) + '&beginIndex=' + str(begin_index) + '&' + API_KEY)
     matches = r['matches']
     total_games = r['totalGames']
     remaining_games = total_games
     while total_games > begin_index:
         begin_index += 100
-        r = get_request(ENDPOINT + 'match/v3/matchlists/by-account/' + accountID + '?season=' + season + '&queue=' + queue + '&beginIndex=' + str(begin_index) + '&' + API_KEY)
+        if queue == 'all':
+            r = get_request(ENDPOINT + 'match/v3/matchlists/by-account/' + accountID + '?season=' + season + '&beginIndex=' + str(begin_index) + '&' + API_KEY)
+        else:
+            r = get_request(ENDPOINT + 'match/v3/matchlists/by-account/' + accountID + '?season=' + season + '&queue=' + str(queue) + '&beginIndex=' + str(begin_index) + '&' + API_KEY)        
         total_games = r['totalGames']
         matches.extend(r['matches'])
     return matches
@@ -238,9 +253,9 @@ def make_workbook(summoner_name, matchlist, accountID, queue, old_data):
                 ws1.cell(column=2, row=row, value=excel_time)
                 ws1.cell(column=2, row=row).style = date_style
                 ws1.cell(column=3, row=row, value=get_champ_name(match['champion'], CHAMP_LIST))
-                ws1.cell(column=4, row=row, value=match['role'])
-                ws1.cell(column=5, row=row, value=match['lane'])
-                ws1.cell(column=6, row=row, value='Solo')
+                ws1.cell(column=4, row=row, value=validate_role(match)['role'])
+                ws1.cell(column=5, row=row, value=validate_role(match)['lane'])
+                ws1.cell(column=6, row=row, value=queue_value_to_name(match_info['queueId'], match_info['gameMode']))
                 ws1.cell(column=7, row=row, value=get_match_state(match_info, team))
                 ws1.cell(column=8, row=row, value=teammates[0])
                 ws1.cell(column=9, row=row, value=teammates[1])
@@ -249,23 +264,67 @@ def make_workbook(summoner_name, matchlist, accountID, queue, old_data):
 
     wb.save(filename=dest_filename)
 
+def parse_queue_input(queue_input):
+    queue_input = queue_input.lower()
+    if queue_input == 'all':
+        return {
+                'value':'all',
+                'name':'all'
+        }
+    elif queue_input == 'flex':
+        return {
+                'value':Queue.FLEX.value,
+                'name':Queue.FLEX.name
+        }
+    elif queue_input == 'solo':
+        return {
+                'value':Queue.SOLO.value,
+                'name':Queue.SOLO.name
+        }
+    else:
+        sys.exit('Please input Flex, Solo, or All and try again')
+
+def queue_value_to_name(queue_value, game_mode):
+    for x in Queue:
+        if x.value == queue_value:
+            return x.name
+    return game_mode
+
+def validate_role(match):
+    if not 'role' in match:
+        if not 'lane' in match:
+            return {
+                    'role':'N/A',
+                    'lane':'N/A'
+            }
+        else:
+            return {
+                    'role':'N/A',
+                    'lane':match['lane']
+        }
+    else:
+        return {
+                'role':match['role'],
+                'lane':match['lane']
+    }
+
 def main():
     global CHAMP_LIST
     load_champ_data()
     summoner_name = input('Enter the summoner you would like to get data for: ')
     accountID = id_from_name(summoner_name)
+    queueInput = input('\nEnter the queue type to get data for (Flex, Solo or All): ')
+    queue = parse_queue_input(queueInput)
     print('Getting matchlist for ' + summoner_name)
 
     # seasonInput = input('\nEnter the season to get data for (as a number): ')
-    # queueInput = input('\nEnter the queue type to get data for (flex or solo): ')
-    # print('\nGetting season ' + seasonInput + ' ' + queueInput + ' queue data for ' + summoner_name)
 
-    matchlist = get_matchlist(accountID, '9', Queue.SOLO.value)
-    old_data = get_current_match_data(summoner_name, Queue.SOLO.name)
-    update_match_data(matchlist, summoner_name, Queue.SOLO.name)
+    matchlist = get_matchlist(accountID, '9', queue['value'])
+    old_data = get_current_match_data(summoner_name, queue['name'])
+    update_match_data(matchlist, summoner_name, queue['name'])
     CHAMP_LIST = get_champ_list()
 
-    make_workbook(summoner_name, matchlist, accountID, Queue.SOLO.name, old_data)
+    make_workbook(summoner_name, matchlist, accountID, queue['name'], old_data)
 
 if __name__ == "__main__":
     main()
